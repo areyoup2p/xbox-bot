@@ -21,6 +21,21 @@ YELLOW = "\033[93m"
 RED = "\033[91m"
 RESET = "\033[0m"
 
+LATIN_TO_CYRILLIC = {
+    'a': 'а', 'b': 'б', 'c': 'с', 'd': 'д', 'e': 'е', 'f': 'ф', 'g': 'г', 'h': 'һ',
+    'i': 'и', 'j': 'й', 'k': 'к', 'l': 'л', 'm': 'м', 'n': 'н', 'o': 'о', 'p': 'р',
+    'q': 'ч', 'r': 'р', 's': 'с', 't': 'т', 'u': 'у', 'v': 'в', 'w': 'ш', 'x': 'х',
+    'y': 'у', 'z': 'з',
+    'A': 'А', 'B': 'Б', 'C': 'С', 'D': 'Д', 'E': 'Е', 'F': 'Ф', 'G': 'Г', 'H': 'Һ',
+    'I': 'И', 'J': 'Й', 'K': 'К', 'L': 'Л', 'M': 'М', 'N': 'Н', 'O': 'О', 'P': 'Р',
+    'Q': 'Ч', 'R': 'Р', 'S': 'С', 'T': 'Т', 'U': 'У', 'V': 'В', 'W': 'Ш', 'X': 'Х',
+    'Y': 'У', 'Z': 'З'
+}
+
+def to_cyrillic(text):
+    """Convert Latin letters to Cyrillic"""
+    return ''.join(LATIN_TO_CYRILLIC.get(c, c) for c in text)
+
 class TokenManager:
     def __init__(self, tokens):
         self.tokens = [t.strip() for t in tokens if t.strip()]
@@ -144,6 +159,7 @@ def worker(tm, texts, args):
 
         sid = str(uuid.uuid4())
         text = random.choice(texts)
+        text = to_cyrillic(text)  # Convert to Cyrillic
 
         payload = make_payload(text, args.xuid, args.join, args.read, args.target, args.vis)
 
@@ -249,6 +265,30 @@ def main():
     if args.mode == "clean":
         cleanup(args)
         return
+
+    # Always cleanup existing LFG sessions before starting
+    existing_sids = load_saved_sessions(args.sessions)
+    if existing_sids:
+        print(f"{YELLOW}cleaning up {len(existing_sids)} existing LFG sessions first...{RESET}")
+        tokens = load_tokens(args.tokens)
+        tm_cleanup = TokenManager(tokens)
+        
+        def clean_one(sid):
+            tok = tm_cleanup.get()
+            if not tok:
+                return
+            h = {
+                "x-xbl-contract-version": "107",
+                "authorization": tok,
+                "User-Agent": "okhttp/3.12.1",
+                "X-UserAgent": "Android/191121000 SM-A715F.AndroidPhone"
+            }
+            delete_one(sid, h, args.scid)
+        
+        with ThreadPoolExecutor(max_workers=args.threads) as ex:
+            ex.map(clean_one, existing_sids)
+        
+        print(f"{GREEN}cleanup complete{RESET}\n")
 
     tokens = load_tokens(args.tokens)
     tm = TokenManager(tokens)
