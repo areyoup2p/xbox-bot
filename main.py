@@ -22,18 +22,33 @@ RED = "\033[91m"
 RESET = "\033[0m"
 
 LATIN_TO_CYRILLIC = {
-    'a': 'а', 'b': 'б', 'c': 'с', 'd': 'д', 'e': 'е', 'f': 'ф', 'g': 'г', 'h': 'һ',
-    'i': 'и', 'j': 'й', 'k': 'к', 'l': 'л', 'm': 'м', 'n': 'н', 'o': 'о', 'p': 'р',
-    'q': 'ч', 'r': 'р', 's': 'с', 't': 'т', 'u': 'у', 'v': 'в', 'w': 'ш', 'x': 'х',
-    'y': 'у', 'z': 'з',
-    'A': 'А', 'B': 'Б', 'C': 'С', 'D': 'Д', 'E': 'Е', 'F': 'Ф', 'G': 'Г', 'H': 'Һ',
-    'I': 'И', 'J': 'Й', 'K': 'К', 'L': 'Л', 'M': 'М', 'N': 'Н', 'O': 'О', 'P': 'Р',
-    'Q': 'Ч', 'R': 'Р', 'S': 'С', 'T': 'Т', 'U': 'У', 'V': 'В', 'W': 'Ш', 'X': 'Х',
-    'Y': 'У', 'Z': 'З'
+    'a': 'а', 'b': 'б', 'e': 'е', 'o': 'о', 'p': 'р', 's': 'с', 'x': 'х', 'y': 'у', 'c': 'с', 'h': 'һ', 'm': 'м', 'n': 'н', 'u': 'у', 'v': 'в', 'w': 'ш',
+    'A': 'А', 'B': 'Б', 'E': 'Е', 'O': 'О', 'P': 'Р', 'S': 'С', 'X': 'Х', 'Y': 'У', 'C': 'С', 'H': 'Һ', 'M': 'М', 'N': 'Н', 'U': 'У', 'V': 'В', 'W': 'Ш'
 }
 
+USER_AGENTS = [
+    "okhttp/3.12.1",
+    "okhttp/4.10.0",
+    "Mozilla/5.0 (Linux; Android 12) AppleWebKit/537.36",
+    "Mozilla/5.0 (Linux; Android 11) AppleWebKit/537.36",
+    "okhttp/3.14.9"
+]
+
+PROXIES = []
+
+def load_proxies(path):
+    global PROXIES
+    if not path or not os.path.exists(path):
+        return
+    with open(path, encoding="utf-8") as f:
+        PROXIES = [p.strip() for p in f if p.strip()]
+
+def get_proxy():
+    if not PROXIES:
+        return None
+    return {"http": random.choice(PROXIES), "https": random.choice(PROXIES)}
+
 def to_cyrillic(text):
-    """Convert Latin letters to Cyrillic"""
     return ''.join(LATIN_TO_CYRILLIC.get(c, c) for c in text)
 
 class TokenManager:
@@ -129,7 +144,7 @@ def make_search_payload(scid, sid, tags):
 def delete_one(sid, headers, scid):
     try:
         url = f"https://sessiondirectory.xboxlive.com/serviceconfigs/{scid}/sessiontemplates/global(lfg)/sessions/{sid}/members/me"
-        r = requests.delete(url, headers=headers, timeout=8)
+        r = requests.delete(url, headers=headers, timeout=8, proxies=get_proxy())
         if r.status_code in (200, 204):
             with stats_lock:
                 stats["deleted"] += 1
@@ -140,11 +155,6 @@ def delete_one(sid, headers, scid):
     return False
 
 def worker(tm, texts, args):
-    headers_base = {
-        "x-xbl-contract-version": "107",
-        "User-Agent": "okhttp/3.12.1",
-        "X-UserAgent": "Android/191121000 SM-A715F.AndroidPhone"
-    }
     scid = args.scid
     tags = [t.strip() for t in args.tags.split(",") if t.strip()]
 
@@ -154,18 +164,22 @@ def worker(tm, texts, args):
             time.sleep(3)
             continue
 
-        headers = headers_base.copy()
-        headers["authorization"] = token
+        headers = {
+            "x-xbl-contract-version": "107",
+            "User-Agent": random.choice(USER_AGENTS),
+            "X-UserAgent": "Android/191121000 SM-A715F.AndroidPhone",
+            "authorization": token
+        }
 
         sid = str(uuid.uuid4())
         text = random.choice(texts)
-        text = to_cyrillic(text)  # Convert to Cyrillic
+        text = to_cyrillic(text)
 
         payload = make_payload(text, args.xuid, args.join, args.read, args.target, args.vis)
 
         url = f"https://sessiondirectory.xboxlive.com/serviceconfigs/{scid}/sessiontemplates/global(lfg)/sessions/{sid}"
         try:
-            r = requests.put(url, json=payload, headers=headers, timeout=12)
+            r = requests.put(url, json=payload, headers=headers, timeout=12, proxies=get_proxy())
 
             if r.status_code in (201, 204):
                 with stats_lock:
@@ -186,7 +200,8 @@ def worker(tm, texts, args):
                     "https://sessiondirectory.xboxlive.com/handles?include=relatedInfo",
                     json=make_search_payload(scid, sid, tags),
                     headers=headers,
-                    timeout=8
+                    timeout=8,
+                    proxies=get_proxy()
                 )
 
             elif r.status_code in (401, 403):
@@ -231,7 +246,7 @@ def cleanup(args):
         h = {
             "x-xbl-contract-version": "107",
             "authorization": tok,
-            "User-Agent": "okhttp/3.12.1",
+            "User-Agent": random.choice(USER_AGENTS),
             "X-UserAgent": "Android/191121000 SM-A715F.AndroidPhone"
         }
         delete_one(sid, h, args.scid)
@@ -259,14 +274,17 @@ def main():
     p.add_argument("--vis", default="xboxlive", dest="vis")
     p.add_argument("--tags", default="micrequired,textchatrequired")
     p.add_argument("--target", type=int, default=12)
+    p.add_argument("--proxies", default=None, help="Path to proxies file")
 
     args = p.parse_args()
+    
+    if args.proxies:
+        load_proxies(args.proxies)
 
     if args.mode == "clean":
         cleanup(args)
         return
 
-    # Always cleanup existing LFG sessions before starting
     existing_sids = load_saved_sessions(args.sessions)
     if existing_sids:
         print(f"{YELLOW}cleaning up {len(existing_sids)} existing LFG sessions first...{RESET}")
@@ -280,7 +298,7 @@ def main():
             h = {
                 "x-xbl-contract-version": "107",
                 "authorization": tok,
-                "User-Agent": "okhttp/3.12.1",
+                "User-Agent": random.choice(USER_AGENTS),
                 "X-UserAgent": "Android/191121000 SM-A715F.AndroidPhone"
             }
             delete_one(sid, h, args.scid)
