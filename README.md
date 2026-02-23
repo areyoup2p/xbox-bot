@@ -16,3 +16,5 @@ pip install -r requirements.txt
 python main.py --threads 15 --max-active 8 --texts lfg_messages.txt
 
 python main.py --threads 50 --max-active 0
+
+Use --proxies (proxy list text file) to use proxies
